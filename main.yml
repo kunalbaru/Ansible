@@ -1,0 +1,51 @@
+---
+# tasks file for ssh.role
+#- name: sshd_config Hardening
+-  hosts: clients
+   tasks:
+   - block:
+     - name: update X11
+       lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^X11Forwarding'
+        insertbefore: '^#X11Forwarding'
+        line: "X11Forwarding Yes"
+        backup: yes
+   - block:
+     - name: update root login
+       lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^PermitRootLogin'
+        insertbefore: '^#PermitRootLogin'
+        line: "PermitRootLogin yes"
+#        backup: yes
+   - block:
+     - name: update Max Auth Tries
+       lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^MaxAuthTries'
+        insertbefore: '^#MaxAuthTries 6'
+        line: "MaxAuthTries 10"
+#        backup: yes
+   - block:
+     - name: update Max Sessions
+       lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^MaxSessions'
+        insertbefore: '^#MaxSessions'
+        line: "MaxSessions 10"
+#        backup: yes
+   - block:
+     - name: update Alive Interval
+       lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^ClientAliveInterval'
+        insertbefore: '^#ClientAliveInterval'
+        line: "ClientAliveInterval 1200"
+#        backup: yes
+   - block:
+     - name: update Alive Count Max
+       lineinfile:
+        path: /etc/ssh/sshd_config
+        regexp: '^ClientAliveCountMax'
+                                  
