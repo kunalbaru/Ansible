@@ -9,7 +9,7 @@
         path: /etc/ssh/sshd_config
         regexp: '^X11Forwarding'
         insertbefore: '^#X11Forwarding'
-        line: "X11Forwarding Yes"
+        line: "X11Forwarding yes"
         backup: yes
    - block:
      - name: update root login
@@ -48,4 +48,9 @@
        lineinfile:
         path: /etc/ssh/sshd_config
         regexp: '^ClientAliveCountMax'
-                                  
+   - block:
+     - name: Restart sshd service
+       systemd:
+        name: sshd
+        state: restarted
+        enabled: true
