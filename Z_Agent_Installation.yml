@@ -1,0 +1,207 @@
+- debug: msg={{ installation_type }}
+
+- name: check if zabbix is runninx
+  raw: 'ps aux | grep zabbix_agentd | grep -v grep | wc -l'
+  register: zbx_process
+
+- name: check if zabbix is installed
+  raw: 'rpm -q zabbix-agent | grep -v "is not installed" | wc -l'
+  register: zbx_rpm
+
+- debug: msg={{ zbx_process }}
+- debug: msg={{ zbx_rpm }}
+
+- debug: msg={{ zbx_process.stdout_lines[-1] }}
+
+- debug: msg={{ zbx_rpm.stdout_lines[-1] }}
+
+
+- name: Stop installation if zabbix-agent already exist
+  fail: msg="Zabbix agent already installed {{zbx_process.stdout_lines[-1]}} {{zbx_rpm.stdout_lines[-1]}}"
+  when: zbx_process.stdout_lines[-1] | int > 0 or zbx_rpm.stdout_lines[-1] | int > 0
+
+
+- block:
+
+        - name: setup yum.conf
+          lineinfile: dest=/etc/yum.conf insertafter=EOF line="proxy=http://www-proxy.ericsson.se:8080"
+
+        - name: Check if Zabbix Repo Installed
+          command: 'rpm -q zabbix-release-3.0-1.el{{ansible_distribution_major_version}}.noarch'
+          register: zabbix_repo
+          ignore_errors: yes  
+
+        - debug: msg={{ zabbix_repo }}
+
+        - name: Get Zabbix repo rpm
+          get_url: url=http://repo.zabbix.com/zabbix/3.0/rhel/{{ansible_distribution_major_version}}/x86_64/zabbix-release-3.0-1.el{{ansible_distribution_major_version}}.noarch.rpm dest=/tmp/zabbix-release-3.0-1.el{{ansible_distribution_major_version}}.noarch.rpm 
+          environment: "{{ proxy_env }}"
+
+        - debug: msg={{zabbix_repo}}
+
+
+
+        - name: Install Zabbix Repo
+          command: 'rpm -Uvh /tmp/zabbix-release-3.0-1.el{{ansible_distribution_major_version}}.noarch.rpm'
+          when: "{{ zabbix_repo.stdout_lines[0] | match('.*is not installed') }}"
+
+        - name: modify repo config
+          raw: "sed '/^name.*/ a proxy=http://www-proxy.ericsson.se:8080' -i /etc/yum.repos.d/zabbix.repo"
+         # when:  zabbix_repo.stdout_lines[0] == 'zabbix-release-3.0-1.el7.noarch.rpm'
+
+
+        - name: Remove zabbix-agent
+          yum: name="zabbix-agent" update_cache=yes state=absent
+
+        - name: Install zabbix-agent
+          yum:  name="zabbix-agent" update_cache=yes state=installed 
+
+  when: installation_type == 'yum' and ( {{ zbx_process.stdout_lines[-1] }} == 0 or {{ zbx_rpm.stdout_lines[-1] }} == 0 )
+
+- block:
+
+        - name: Copy rpm
+          copy:
+                src: "files/zabbix-agent-3.0.5-1.el{{ansible_distribution_major_version}}.{{ansible_machine}}.rpm"
+                dest: /tmp/
+
+
+        - name: Install Zabbix Agent
+          yum:
+                name: "/tmp/zabbix-agent-3.0.5-1.el{{ansible_distribution_major_version}}.{{ansible_machine}}.rpm"
+                state: present
+
+        - name: Remove rpm file
+          file:
+                path: "files/zabbix-agent-3.0.5-1.el{{ansible_distribution_major_version}}.{{ansible_machine}}.rpm"
+                state: absent
+
+  when: installation_type == 'rpm'  and ( zbx_process.stdout_lines[-1] | int  == 0 or  zbx_rpm.stdout_lines[-1] | int == 0 )
+
+
+- name: check if config exist
+  stat:
+          path: /etc/zabbix/zabbix_agentd.conf
+  register: conf
+
+- debug: msg={{ conf.stat.exists }}
+
+- block:
+
+        - name: modify config
+          lineinfile:
+                 dest: /etc/zabbix/zabbix_agentd.conf
+                 regexp: "^Server=.*"
+                 line: "Server={{ item.value.ip }}"
+          when: item.key == "{{ dc }}"
+          with_dict: proxy
+
+        - name: modify config
+          lineinfile:
+                 dest: /etc/zabbix/zabbix_agentd.conf
+                 regexp: "^Hostname=Zabbix server"
+                 line: "#Hostname=Zabbix server"
+          when: item.key == "{{ dc }}"
+          with_dict: proxy
+
+        - name: create moss zabbix directory
+          file: 
+                 path: "{{ item }}"
+                 state: directory
+          with_items:
+                - /opt/moss
+                - /opt/moss/zabbix
+
+        - name: Include /opt/moss/zabbix in config
+          lineinfile:
+                 dest: /etc/zabbix/zabbix_agentd.conf
+                 insertafter: "Include=/etc/zabbix/zabbix_agentd.d/"
+                 line: "Include=/opt/moss/zabbix/"
+
+  when: conf.stat.exists == true
+
+- block:
+
+        - name: modify TLSConnect in config
+          lineinfile:
+                dest: /etc/zabbix/zabbix_agentd.conf
+                regexp: "# TLSConnect=.*"
+                line: "TLSConnect=psk"
+
+        - name: modify TLSAccept in config
+          lineinfile:
+                dest: /etc/zabbix/zabbix_agentd.conf
+                regexp: "# TLSAccept=.*"
+                line: "TLSAccept=psk"
+
+        - name: modify TLSPSKFile in config
+          lineinfile:
+                dest: /etc/zabbix/zabbix_agentd.conf
+                regexp: "# TLSPSKFile=.*"
+                line: "TLSPSKFile=/etc/zabbix/zabbix_agentd.psk"
+
+  when: conf.stat.exists == true and ( tls == 'uniq' or tls == 'group' ) 
+
+- block:
+
+        - name: generate psk key
+          raw: 'openssl rand -hex 32'
+          register: key
+          no_log: True
+
+        - name: save psk key
+          raw: 'echo {{ key.stdout_lines[0]}} > /etc/zabbix/zabbix_agentd.psk'
+          no_log: True
+
+        - name: generate TLSPSKIdentity
+          raw: 'echo $RANDOM'
+          register: keyid
+          no_log: True
+
+
+        - name: modify TLSPSKIdentity in config
+          lineinfile:
+                dest: '/etc/zabbix/zabbix_agentd.conf'
+                regexp: 'TLSPSKIdentity=.*'
+                line: 'TLSPSKIdentity=MOSS{{ keyid.stdout_lines[0] }}'
+          no_log: True
+
+  when: conf.stat.exists == true and tls == 'uniq' 
+
+- block:
+
+        - name: copy psk key
+          raw: 'echo {{ PSKKEY }} > /etc/zabbix/zabbix_agentd.psk'
+          no_log: True
+
+        - name: modify TLSPSKIdentity in config
+          lineinfile:
+                dest: '/etc/zabbix/zabbix_agentd.conf'
+                regexp: 'TLSPSKIdentity=.*'
+                line: 'TLSPSKIdentity={{ TLSPSKIdentity }}'
+          no_log: True
+
+  when: conf.stat.exists == true and tls == 'group'
+
+
+
+- name: restart zabbix agent
+  service:
+          name: zabbix-agent
+          state: restarted
+          enabled: yes
+
+
+- name: Add host to Zabbix Server group PSK
+  raw: './addhost.py -z "{{ zabbix_server_url }}" -u "{{ zabbix_user }}" -p "{{ zabbix_password }}" -H "{{ansible_fqdn}}" -G "{{ zbx_groups }}" -T "{{ zbx_templates }}" -P 1 -I "{{ TLSPSKIdentity }}" -K "{{ PSKKEY }}" -X {{ item.value.name }}'
+  delegate_to: 127.0.0.1
+  when: item.key == "{{dc}}" and tls == 'group'
+  with_dict: "{{ proxy }}" 
+  no_log: True
+
+- name: Add host to Zabbix Server uniq PSK
+  raw: './addhost.py -z "{{ zabbix_server_url }}" -u "{{ zabbix_user }}" -p "{{ zabbix_password }}" -H "{{ansible_fqdn}}" -G "{{ zbx_groups }}" -T "{{ zbx_templates }}" -P 1 -I "MOSS{{ keyid.stdout_lines[0] }}" -K "{{ key.stdout_lines[0]}}" -X {{ item.value.name }}'
+  delegate_to: 127.0.0.1
+  when: item.key == "{{dc}}" and tls == 'uniq'
+  with_dict: "{{ proxy }}"
+  no_log: True
