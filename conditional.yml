@@ -1,0 +1,33 @@
+---
+- name: HTTPD WP
+  hosts: client1
+  tasks:
+  - name: Display facts
+    debug:
+     msg: Hostname for this node is  "{{ ansible_hostname }}"
+  - name: Check HTTPD is installed on this node
+    raw: 'ps -aux |grep httpd* |rep -v grep |wc -l'
+    register: httpd_process
+  - name: Check if httpd is installed
+    raw: 'rpm -q httpd* |grep -v "notinstalled"| wc -l'
+    register: httpd_rpm
+  - debug:
+     msg: "{{ httpd_rpm }}"
+  - name: check debug
+    debug:
+     msg: "{{ httpd_process.stdout_lines[-1] }}"
+#     msg: "{{ httpd_process }}"
+  - name: hello
+    debug:
+     msg: "{{ httpd_rpm}}"
+  - name: Http service status
+    debug:
+     msg: "{{ httpd_process }}"
+  - name: httpd install
+    yum:
+     name: httpd
+     state: present
+  - name: httpd service start
+    service:
+     name: httpd
+     state: started
